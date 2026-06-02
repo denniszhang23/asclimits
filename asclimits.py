@@ -49,6 +49,7 @@ def discretize(series: gpd.GeoSeries, length: float) -> gpd.GeoSeries:
     out = shapely.segmentize(geom.LineString(series_proj.geometry), length)
     return gpd.GeoSeries([geom.Point(p) for p in out.coords])
 
+#below are the functions I have created
 
 def cumulative_dist(series: gpd.GeoSeries, units: str) -> float:
     projSeries = series.to_crs(epsg=5071)
@@ -72,7 +73,60 @@ def cumulative_dist(series: gpd.GeoSeries, units: str) -> float:
         print("Cumulative distance at each index:", cumDist * 0.000621371, "miles")
         print("Total distance:", currentDist * 0.000621371, "miles")
 
-#two trial calls
-cumulative_dist(parse_gpx(r'C:\Users\admin\Downloads\1BL_EdwardsvilleLoop.gpx'), "kilometers")
-cumulative_dist(parse_gpx(r'C:\Users\admin\Downloads\1A_NashvilleToPaducah.gpx'), "meters")
-#cumulative_dist(parse_gpx(r'C:\Users\admin\Downloads\1A_NashvilleToPaducah.gpx'), "feet")
+def gps_time_proj(df: pl.DataFrame) -> float:
+    """Algorithm finds time taken to travel from one location to another.
+
+    Takes in polars dataframe to find total time taken to travel through
+    track data using only speed limits.
+
+    Args:
+        df (polars dataframe): input polars dataframe, df must have "Spd" and
+        "Int" columns, pdf_parser_extract_table guarantees that these columns
+        will be there given that the right page numbers are used. Columns will
+        be cast as Float64 for calculation. Ensure columns have the same units.
+
+    Returns:
+        (float): returns estimate of time taken to travel through
+        routebook pages using distance intervals and speed limits in those
+        intervals.
+
+    """
+    df = df.with_columns(
+        pl.col("Spd").cast(pl.Float64, strict=False).forward_fill()
+    )
+    df = df.with_columns(pl.col("Int").cast(pl.Float64, strict=False))
+
+    return df.select(
+        (pl.col("Int") / pl.col("Spd").replace(0, None)).sum()
+    ).item()
+
+
+def scale_time_proj(df: pl.DataFrame, time: float) -> pl.Series:
+    """Algorithm to find car speeds at each interval specified by routebook.
+
+    Takes in target time as a float and the routebook in the form of a polars
+    dataframe and calculates the speed at which the car should travel in each
+    interval to meet the target time by multiplying speed limits in each
+    interval by a common scaling factor.
+
+    Args:
+        df (polars dataframe): input polars dataframe, df must have "Spd" and
+        "Int" columns, pdf_parser_extract_table guarantees that these columns
+        will be there given that the right page numbers are used. Columns will
+        be cast as Float64 for calculation. Ensure columns have the same units.
+
+        time (float): this is the time we want the car to take to travel through
+        the designated distance interval. Make sure that the unit of input time
+        is the same as the time specified in the rate given in the "Spd" column.
+
+    Returns:
+        (polars series): outputs column of speeds at which the car should travel
+        at in each interval.
+
+    """
+    df = df.with_columns(
+        pl.col("Spd").cast(pl.Float64, strict=False).forward_fill()
+    )
+    df = df.with_columns(pl.col("Int").replace("", None).cast(pl.Float64))
+
+    return df.select(pl.col("Spd") * gps_time_proj(df) / time).to_series()
